@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cosmo Quest 🚀</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0a0015;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    font-family: 'Press Start 2P', monospace;
+    overflow: hidden;
+  }
+
+  #stars {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  #ui {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    gap: 30px;
+    margin-bottom: 12px;
+    color: #fff;
+    font-size: 10px;
+    text-shadow: 0 0 10px #a78bfa;
+  }
+
+  #ui span { color: #ffd700; }
+
+  #gameWrapper {
+    position: relative;
+    z-index: 2;
+    border: 3px solid #7c3aed;
+    box-shadow: 0 0 40px #7c3aed88, 0 0 80px #7c3aed44, inset 0 0 20px #00000099;
+    border-radius: 4px;
+  }
+
+  canvas {
+    display: block;
+    image-rendering: pixelated;
+  }
+
+  #message {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: #fff;
+    font-size: 11px;
+    text-align: center;
+    line-height: 2.2;
+    text-shadow: 0 0 20px #a78bfa, 0 0 40px #7c3aed;
+    pointer-events: none;
+    z-index: 5;
+  }
+
+  #message .title {
+    font-size: 22px;
+    color: #ffd700;
+    text-shadow: 0 0 20px #ffd700, 0 0 40px #f59e0b;
+    display: block;
+    margin-bottom: 16px;
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+
+  #message .sub {
+    color: #c4b5fd;
+    font-size: 9px;
+  }
+
+  @keyframes pulse {
+    0%,100% { transform: scale(1); }
+    50% { transform: scale(1.05); }
+  }
+
+  #controls {
+    position: relative;
+    z-index: 2;
+    margin-top: 12px;
+    color: #6d28d9;
+    font-size: 7px;
+    text-align: center;
+    line-height: 2.4;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="stars" width="800" height="550"></canvas>
+
+<div id="ui">
+  <div>SCORE: <span id="scoreDisplay">0</span></div>
+  <div>LIVES: <span id="livesDisplay">❤️❤️❤️</span></div>
+  <div>LEVEL: <span id="levelDisplay">1</span></div>
+  <div>COINS: <span id="coinsDisplay">0</span></div>
+</div>
+
+<div id="gameWrapper">
+  <canvas id="game" width="800" height="450"></canvas>
+  <div id="message">
+    <span class="title">🚀 COSMO QUEST</span>
+    Press <span style="color:#ffd700">SPACE</span> or <span style="color:#ffd700">↑</span> to Start<br>
+    <span class="sub">← → to move &nbsp;|&nbsp; SPACE/↑ to jump<br>Collect stars ★ &nbsp;|&nbsp; Avoid aliens 👾</span>
+  </div>
+</div>
+
+<div id="controls">
+  ← → MOVE &nbsp;&nbsp; SPACE / ↑ JUMP &nbsp;&nbsp; DOUBLE JUMP AVAILABLE!
+</div>
+
+<script>
+// ── Stars background ──
+const starCanvas = document.getElementById('stars');
+const sCtx = starCanvas.getContext('2d');
+const STARS = Array.from({length: 200}, () => ({
+  x: Math.random() * 800, y: Math.random() * 550,
+  r: Math.random() * 1.5 + 0.3,
+  alpha: Math.random(),
+  speed: Math.random() * 0.3 + 0.05
+}));
+function drawStars() {
+  sCtx.clearRect(0,0,800,550);
+  STARS.forEach(s => {
+    s.alpha += s.speed * 0.02;
+    const a = (Math.sin(s.alpha) + 1) / 2 * 0.8 + 0.2;
+    sCtx.beginPath();
+    sCtx.arc(s.x, s.y, s.r, 0, Math.PI*2);
+    sCtx.fillStyle = `rgba(255,255,255,${a})`;
+    sCtx.fill();
+  });
+  requestAnimationFrame(drawStars);
+}
+drawStars();
+
+// ── Game ──
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const W = 800, H = 450;
+
+const msgEl = document.getElementById('message');
+const scoreEl = document.getElementById('scoreDisplay');
+const livesEl = document.getElementById('livesDisplay');
+const levelEl = document.getElementById('levelDisplay');
+const coinsEl = document.getElementById('coinsDisplay');
+
+let state = 'title'; // title, playing, dead, win
+let score = 0, lives = 3, coins = 0, level = 1;
+let cameraX = 0;
+
+// ─ Player ─
+const GRAVITY = 0.55;
+const JUMP_FORCE = -13;
+const SPEED = 4;
+
+let player = {};
+function resetPlayer() {
+  player = {
+    x: 80, y: 300,
+    vx: 0, vy: 0,
+    w: 28, h: 32,
+    onGround: false,
+    jumpsLeft: 2,
+    invincible: 0,
+    frame: 0, frameTimer: 0,
+    facing: 1,
+    dead: false,
+    deathTimer: 0
+  };
+}
+resetPlayer();
+
+// ─ Level data ─
+function buildLevel(lvl) {
+  const platforms = [];
+  const enemies = [];
+  const coins_ = [];
+  const stars_ = [];
+
+  // Ground
+  for (let x = 0; x < 6000; x += 64) {
+    platforms.push({x, y: 390, w: 64, h: 60, type:'ground'});
+  }
+
+  // Gaps + floating platforms
+  const configs = [
+    // level 1 base
+    {x:300,y:320,w:90},{x:450,y:270,w:80},{x:600,y:310,w:100},
+    {x:750,y:250,w:80},{x:950,y:310,w:90},{x:1100,y:260,w:70},
+    {x:1250,y:300,w:100},{x:1450,y:240,w:80},{x:1600,y:290,w:90},
+    {x:1800,y:220,w:80},{x:1950,y:300,w:100},{x:2100,y:260,w:90},
+    {x:2300,y:310,w:80},{x:2450,y:250,w:70},{x:2650,y:290,w:100},
+    {x:2850,y:230,w:80},{x:3000,y:300,w:90},{x:3200,y:260,w:80},
+    {x:3400,y:310,w:90},{x:3600,y:240,w:100},
+  ];
+
+  // Remove ground tiles where gaps should be
+  const gaps = [{x:420,w:120},{x:850,w:100},{x:1370,w:80},{x:1750,w:120},{x:2220,w:100},{x:2780,w:110},{x:3100,w:100},{x:3500,w:120}];
+  
+  // Re-add ground except gaps
+  platforms.length = 0;
+  for (let x = 0; x < 4200; x += 32) {
+    let inGap = gaps.some(g => x + 32 > g.x && x < g.x + g.w);
+    if (!inGap) platforms.push({x, y: 390, w: 32, h: 60, type:'ground'});
+  }
+  // Floating
+  configs.forEach(c => platforms.push({x:c.x,y:c.y,w:c.w,h:16,type:'float'}));
+
+  // Enemies
+  const ePlaces = [350,550,750,1000,1200,1500,1700,2000,2200,2500,2700,3000,3200,3500,3700];
+  ePlaces.forEach((ex,i) => {
+    enemies.push({x:ex, y:340, w:26, h:24, vx: (i%2===0 ? 1.2 : -1.2)*(1+lvl*0.15), alive:true, frame:0, frameTimer:0, dir:1, startX:ex-60, endX:ex+60});
+  });
+
+  // Coins on platforms
+  configs.forEach(c => {
+    for(let i=0;i<3;i++) coins_.push({x:c.x+10+i*22, y:c.y-22, w:14, h:14, collected:false});
+  });
+  // Ground coins
+  for(let i=0;i<25;i++) coins_.push({x:150+i*140, y:364, w:14, h:14, collected:false});
+
+  // Stars (special)
+  stars_.push({x:800,y:200,w:24,h:24,collected:false});
+  stars_.push({x:1900,y:170,w:24,h:24,collected:false});
+  stars_.push({x:3000,y:210,w:24,h:24,collected:false});
+
+  // Goal flag
+  const goal = {x:3900, y:260, w:24, h:130};
+
+  return {platforms, enemies, coins:coins_, stars:stars_, goal, worldW:4100};
+}
+
+let world = buildLevel(1);
+
+// ─ Input ─
+const keys = {};
+window.addEventListener('keydown', e => {
+  if(['ArrowLeft','ArrowRight','ArrowUp','Space','ArrowDown'].includes(e.code)) e.preventDefault();
+  keys[e.code] = true;
+  if((e.code==='Space'||e.code==='ArrowUp') && state==='title') startGame();
+  if((e.code==='Space'||e.code==='ArrowUp') && state==='dead') restartLevel();
+  if((e.code==='Space'||e.code==='ArrowUp') && state==='gameover') initGame();
+  if((e.code==='Space'||e.code==='ArrowUp') && state==='win') { level=Math.min(level+1,3); startGame(); }
+});
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+function startGame() {
+  state = 'playing';
+  msgEl.style.display = 'none';
+  world = buildLevel(level);
+  resetPlayer();
+  cameraX = 0;
+}
+
+function initGame() {
+  score = 0; lives = 3; coins = 0; level = 1;
+  updateHUD();
+  startGame();
+}
+
+function restartLevel() {
+  state = 'playing';
+  msgEl.style.display = 'none';
+  world = buildLevel(level);
+  resetPlayer();
+  cameraX = 0;
+}
+
+function updateHUD() {
+  scoreEl.textContent = score;
+  livesEl.textContent = '❤️'.repeat(Math.max(0,lives));
+  levelEl.textContent = level;
+  coinsEl.textContent = coins;
+}
+
+// ─ AABB ─
+function collides(a, b) {
+  return a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y;
+}
+
+// ─ Particles ─
+let particles = [];
+function spawnParticles(x, y, color, count=8) {
+  for(let i=0;i<count;i++) {
+    const angle = (Math.PI*2/count)*i + Math.random()*0.5;
+    particles.push({x, y, vx:Math.cos(angle)*3*(Math.random()+0.5), vy:Math.sin(angle)*3*(Math.random()+0.5)-1, life:1, color, size:4+Math.random()*4});
+  }
+}
+
+// ─ Update ─
+function update() {
+  if(state !== 'playing') return;
+
+  // Player death anim
+  if(player.dead) {
+    player.deathTimer++;
+    player.vy += GRAVITY;
+    player.y += player.vy;
+    if(player.deathTimer > 80) {
+      lives--;
+      updateHUD();
+      if(lives <= 0) showGameOver();
+      else { state='dead'; showMessage('💀 OOPS!', 'Press SPACE to retry', '#ff6b6b'); }
+    }
+    return;
+  }
+
+  // Movement
+  if(keys['ArrowLeft']) { player.vx = -SPEED; player.facing = -1; }
+  else if(keys['ArrowRight']) { player.vx = SPEED; player.facing = 1; }
+  else player.vx *= 0.8;
+
+  // Jump
+  if((keys['Space']||keys['ArrowUp']) && !keys['_jumpHeld'] && player.jumpsLeft > 0) {
+    player.vy = JUMP_FORCE * (player.jumpsLeft===2 ? 1 : 0.85);
+    player.jumpsLeft--;
+    keys['_jumpHeld'] = true;
+    spawnParticles(player.x+player.w/2, player.y+player.h, '#a78bfa', 6);
+  }
+  if(!keys['Space']&&!keys['ArrowUp']) keys['_jumpHeld'] = false;
+
+  // Gravity
+  player.vy += GRAVITY;
+  player.vy = Math.min(player.vy, 18);
+  player.x += player.vx;
+  player.y += player.vy;
+
+  // Platform collision
+  player.onGround = false;
+  world.platforms.forEach(p => {
+    if(collides(player, p)) {
+      const overlapX = Math.min(player.x+player.w, p.x+p.w) - Math.max(player.x, p.x);
+      const overlapY = Math.min(player.y+player.h, p.y+p.h) - Math.max(player.y, p.y);
+      if(overlapY < overlapX) {
+        if(player.y < p.y) { player.y = p.y - player.h; player.vy = 0; player.onGround = true; player.jumpsLeft = 2; }
+        else { player.y = p.y + p.h; player.vy = 0; }
+      } else {
+        if(player.x < p.x) player.x = p.x - player.w;
+        else player.x = p.x + p.w;
+        player.vx = 0;
+      }
+    }
+  });
+
+  // Fall into pit
+  if(player.y > H + 80) killPlayer();
+
+  // Animate player
+  player.frameTimer++;
+  if(player.frameTimer > 8) { player.frame = (player.frame+1)%4; player.frameTimer=0; }
+
+  // Camera
+  cameraX = Math.max(0, Math.min(player.x - W/3, world.worldW - W));
+
+  // Invincibility
+  if(player.invincible > 0) player.invincible--;
+
+  // Enemies
+  world.enemies.forEach(e => {
+    if(!e.alive) return;
+    e.x += e.vx;
+    if(e.x < e.startX || e.x > e.endX) { e.vx *= -1; e.dir *= -1; }
+    e.frameTimer++;
+    if(e.frameTimer>10){e.frame=(e.frame+1)%2;e.frameTimer=0;}
+
+    if(player.invincible <= 0 && collides(player, e)) {
+      if(player.vy > 0 && player.y + player.h < e.y + e.h - 8) {
+        // Stomp!
+        e.alive = false;
+        player.vy = JUMP_FORCE * 0.6;
+        score += 100;
+        spawnParticles(e.x+e.w/2, e.y, '#ff6b6b', 10);
+        updateHUD();
+      } else {
+        killPlayer();
+      }
+    }
+  });
+
+  // Coins
+  world.coins.forEach(c => {
+    if(!c.collected && collides(player, c)) {
+      c.collected = true;
+      coins++;
+      score += 10;
+      spawnParticles(c.x+7, c.y+7, '#ffd700', 6);
+      updateHUD();
+    }
+  });
+
+  // Stars
+  world.stars.forEach(s => {
+    if(!s.collected && collides(player, s)) {
+      s.collected = true;
+      score += 500;
+      lives++;
+      spawnParticles(s.x+12, s.y+12, '#ffffff', 16);
+      updateHUD();
+    }
+  });
+
+  // Goal
+  if(collides(player, world.goal)) {
+    state = 'win';
+    score += 1000;
+    updateHUD();
+    showMessage('🎉 LEVEL CLEAR!', `Score: ${score}\nPress SPACE for Level ${Math.min(level+1,3)}`, '#ffd700');
+  }
+
+  // Particles
+  particles.forEach(p => {
+    p.x += p.vx; p.y += p.vy; p.vy += 0.15;
+    p.life -= 0.035;
+    p.size *= 0.97;
+  });
+  particles = particles.filter(p => p.life > 0);
+}
+
+function killPlayer() {
+  if(player.invincible > 0 || player.dead) return;
+  player.dead = true;
+  player.vy = JUMP_FORCE;
+  player.vx = 0;
+  spawnParticles(player.x+player.w/2, player.y+player.h/2, '#ff6b6b', 14);
+}
+
+function showGameOver() {
+  state = 'gameover';
+  showMessage('💀 GAME OVER', `Final Score: ${score}\nPress SPACE to retry`, '#ff6b6b');
+}
+
+function showMessage(title, sub, color) {
+  msgEl.innerHTML = `<span class="title" style="color:${color};text-shadow:0 0 20px ${color}">${title}</span>${sub.replace(/\n/g,'<br>')}`;
+  msgEl.style.display = 'block';
+}
+
+// ─ Draw helpers ─
+function drawRect(x, y, w, h, color) {
+  ctx.fillStyle = color;
+  ctx.fillRect(Math.round(x - cameraX), Math.round(y), w, h);
+}
+
+function drawPixelArt(x, y, grid, size=4) {
+  const sx = Math.round(x - cameraX);
+  grid.forEach((row,ry) => row.forEach((col,rx) => {
+    if(col) { ctx.fillStyle=col; ctx.fillRect(sx+rx*size, y+ry*size, size, size); }
+  }));
+}
+
+// ─ Sprite data ─
+const playerColors = { H:'#fbbf24', B:'#6d28d9', L:'#3730a3', E:'#1e1b4b', S:'#f97316', W:'#ffffff', R:'#dc2626' };
+
+function getPlayerSprite(frame, dir, invincible) {
+  // Simple astronaut pixel art 7x8
+  const _ = null;
+  const H=playerColors.H, B=playerColors.B, L=playerColors.L, E=playerColors.E, W=playerColors.W, R=playerColors.R;
+  const legAnim = frame%2===0;
+  if(invincible>0 && Math.floor(invincible/4)%2===0) return null;
+  return [
+    [_,_,H,H,H,_,_],
+    [_,H,W,W,W,H,_],
+    [_,H,W,E,W,H,_],
+    [_,_,H,H,H,_,_],
+    [_,B,B,B,B,B,_],
+    [B,B,B,B,B,B,B],
+    [_,L,_,_,_,L,_],
+    legAnim?[L,_,_,_,_,_,L]:[_,L,_,_,_,L,_],
+  ];
+}
+
+function drawPlayer() {
+  const sprite = getPlayerSprite(player.frame, player.facing, player.invincible);
+  if(!sprite) return;
+  const sx = Math.round(player.x - cameraX);
+  ctx.save();
+  if(player.facing < 0) { ctx.translate(sx + player.w, player.y); ctx.scale(-1,1); ctx.translate(-sx, -player.y); }
+  sprite.forEach((row,ry) => row.forEach((col,rx) => {
+    if(col) { ctx.fillStyle=col; ctx.fillRect(sx+rx*4, Math.round(player.y)+ry*4, 4, 4); }
+  }));
+  ctx.restore();
+  // Jetpack flame
+  if(!player.onGround && player.vy < -2) {
+    ctx.fillStyle = `hsla(30,100%,60%,${0.6+Math.random()*0.4})`;
+    ctx.fillRect(sx+8, Math.round(player.y)+player.h, 4, 4+Math.floor(Math.random()*6));
+    ctx.fillRect(sx+16, Math.round(player.y)+player.h, 4, 4+Math.floor(Math.random()*4));
+  }
+}
+
+function drawEnemy(e) {
+  const _ = null;
+  const G='#22c55e', D='#166534', Y='#fbbf24', R='#ef4444', W='#ffffff';
+  const sprite = [
+    [_,_,R,_,R,_,_],
+    [_,_,R,R,R,_,_],
+    [_,G,G,G,G,G,_],
+    [G,G,Y,G,Y,G,G],
+    [G,G,G,G,G,G,G],
+    [_,D,G,D,G,D,_],
+    e.frame===0?[_,D,_,_,_,D,_]:[_,_,D,_,D,_,_],
+  ];
+  const sx = Math.round(e.x - cameraX);
+  ctx.save();
+  if(e.dir < 0) { ctx.translate(sx+e.w, e.y); ctx.scale(-1,1); ctx.translate(-sx,-e.y); }
+  sprite.forEach((row,ry) => row.forEach((col,rx) => {
+    if(col){ctx.fillStyle=col; ctx.fillRect(sx+rx*4, Math.round(e.y)+ry*4, 4, 4);}
+  }));
+  ctx.restore();
+}
+
+let t = 0;
+// ─ Render ─
+function draw() {
+  t++;
+  ctx.clearRect(0,0,W,H);
+
+  // Background gradient
+  const grad = ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'#0f0025');
+  grad.addColorStop(1,'#1a0040');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0,0,W,H);
+
+  // Nebula
+  const ngrad = ctx.createRadialGradient(200,150,10,200,150,250);
+  ngrad.addColorStop(0,'rgba(109,40,217,0.15)');
+  ngrad.addColorStop(1,'transparent');
+  ctx.fillStyle = ngrad;
+  ctx.fillRect(0,0,W,H);
+  const ngrad2 = ctx.createRadialGradient(600,200,10,600,200,200);
+  ngrad2.addColorStop(0,'rgba(59,130,246,0.12)');
+  ngrad2.addColorStop(1,'transparent');
+  ctx.fillStyle = ngrad2;
+  ctx.fillRect(0,0,W,H);
+
+  if(state === 'title') {
+    // Animated planets in title
+    ctx.fillStyle = 'rgba(109,40,217,0.5)';
+    ctx.beginPath();
+    ctx.arc(150, 300, 60+Math.sin(t*0.02)*3, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(59,130,246,0.4)';
+    ctx.beginPath();
+    ctx.arc(650, 200, 40+Math.cos(t*0.025)*2, 0, Math.PI*2);
+    ctx.fill();
+    return;
+  }
+
+  // Platforms
+  world.platforms.forEach(p => {
+    const px = Math.round(p.x - cameraX);
+    if(px > W+10 || px+p.w < -10) return;
+    if(p.type==='ground') {
+      // Ground tile
+      ctx.fillStyle = '#1e1b4b';
+      ctx.fillRect(px, Math.round(p.y), p.w, p.h);
+      ctx.fillStyle = '#7c3aed';
+      ctx.fillRect(px, Math.round(p.y), p.w, 4);
+      // Stars pattern
+      if(px % 64 === 0 || true) {
+        ctx.fillStyle = '#312e81';
+        ctx.fillRect(px+2, Math.round(p.y)+8, p.w-4, p.h-12);
+      }
+    } else {
+      // Floating platform
+      ctx.fillStyle = '#7c3aed';
+      ctx.fillRect(px, Math.round(p.y), p.w, p.h);
+      ctx.fillStyle = '#a78bfa';
+      ctx.fillRect(px, Math.round(p.y), p.w, 4);
+      ctx.fillStyle = '#4c1d95';
+      ctx.fillRect(px, Math.round(p.y)+4, p.w, p.h-4);
+      // Glowing edge
+      ctx.fillStyle = 'rgba(196,181,253,0.4)';
+      ctx.fillRect(px, Math.round(p.y), p.w, 2);
+    }
+  });
+
+  // Goal flag
+  const gx = Math.round(world.goal.x - cameraX);
+  if(gx > -20 && gx < W+20) {
+    ctx.fillStyle = '#ffd700';
+    ctx.fillRect(gx+10, Math.round(world.goal.y), 4, world.goal.h);
+    ctx.fillStyle = '#f59e0b';
+    ctx.beginPath();
+    ctx.moveTo(gx+14, Math.round(world.goal.y));
+    ctx.lineTo(gx+38, Math.round(world.goal.y)+14);
+    ctx.lineTo(gx+14, Math.round(world.goal.y)+28);
+    ctx.fill();
+    // Glow
+    const gg = ctx.createRadialGradient(gx+14, Math.round(world.goal.y)+world.goal.h/2, 0, gx+14, Math.round(world.goal.y)+world.goal.h/2, 40);
+    gg.addColorStop(0,'rgba(253,224,71,0.3)');
+    gg.addColorStop(1,'transparent');
+    ctx.fillStyle = gg;
+    ctx.fillRect(gx-20, Math.round(world.goal.y), 80, world.goal.h);
+  }
+
+  // Stars (collectibles)
+  world.stars.forEach(s => {
+    if(s.collected) return;
+    const sx = Math.round(s.x - cameraX);
+    if(sx < -20 || sx > W+20) return;
+    const bob = Math.sin(t*0.08)*3;
+    ctx.fillStyle = '#fff';
+    ctx.shadowColor = '#fff';
+    ctx.shadowBlur = 15;
+    const points = 5, outer=12, inner=5;
+    ctx.beginPath();
+    for(let i=0;i<points*2;i++){
+      const r = i%2===0?outer:inner;
+      const angle = (Math.PI/points)*i - Math.PI/2;
+      i===0?ctx.moveTo(sx+12+Math.cos(angle)*r, s.y+12+bob+Math.sin(angle)*r):ctx.lineTo(sx+12+Math.cos(angle)*r, s.y+12+bob+Math.sin(angle)*r);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  });
+
+  // Coins
+  world.coins.forEach(c => {
+    if(c.collected) return;
+    const cx = Math.round(c.x - cameraX);
+    if(cx < -20 || cx > W+20) return;
+    const bob = Math.sin(t*0.1+c.x*0.05)*2;
+    ctx.fillStyle = '#ffd700';
+    ctx.shadowColor = '#fbbf24';
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.arc(cx+7, c.y+7+bob, 7, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle = '#f59e0b';
+    ctx.beginPath();
+    ctx.arc(cx+6, c.y+6+bob, 3, 0, Math.PI*2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  });
+
+  // Enemies
+  world.enemies.forEach(e => {
+    if(!e.alive) return;
+    const ex = Math.round(e.x - cameraX);
+    if(ex < -30 || ex > W+30) return;
+    drawEnemy(e);
+  });
+
+  // Player
+  if(!player.dead || (player.dead && Math.floor(player.deathTimer/4)%2===0)) {
+    drawPlayer();
+  }
+
+  // Particles
+  particles.forEach(p => {
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = p.color;
+    ctx.fillRect(Math.round(p.x - cameraX), Math.round(p.y), Math.ceil(p.size), Math.ceil(p.size));
+  });
+  ctx.globalAlpha = 1;
+
+  // Vignette
+  const vig = ctx.createRadialGradient(W/2,H/2,H*0.3,W/2,H/2,H*0.9);
+  vig.addColorStop(0,'transparent');
+  vig.addColorStop(1,'rgba(0,0,20,0.5)');
+  ctx.fillStyle = vig;
+  ctx.fillRect(0,0,W,H);
+}
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+loop();
+updateHUD();
+</script>
+</body>
+</html>
